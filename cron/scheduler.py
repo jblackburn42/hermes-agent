@@ -3004,6 +3004,30 @@ def run_job(
                 f"(or pin the original values to keep them). See #44585."
             )
 
+        # Apply task-aware routing only after the spend-drift guard validates
+        # the configured default. Explicit per-job model pins always win.
+        try:
+            from agent.model_router import resolve_model_route
+            from hermes_constants import parse_reasoning_effort
+
+            _route = resolve_model_route(
+                prompt,
+                provider=runtime.get("provider") or "",
+                current_model=model,
+                config=_cfg,
+                preserve_model=bool((job.get("model") or "").strip()),
+                hermes_home=_get_hermes_home(),
+            )
+            model = _route.model
+            if _route.reasoning_effort:
+                reasoning_config = parse_reasoning_effort(_route.reasoning_effort)
+        except Exception as _route_exc:
+            logger.warning(
+                "Job '%s': smart model routing failed; using configured model: %s",
+                job_id,
+                _route_exc,
+            )
+
         fallback_model = get_fallback_chain(_cfg) or None
         credential_pool = None
         runtime_provider = str(runtime.get("provider") or "").strip().lower()

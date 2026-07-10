@@ -3888,7 +3888,15 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
 
         return model, runtime_kwargs
 
-    def _resolve_turn_agent_config(self, user_message: str, model: str, runtime_kwargs: dict) -> dict:
+    def _resolve_turn_agent_config(
+        self,
+        user_message: str,
+        model: str,
+        runtime_kwargs: dict,
+        *,
+        user_config: Optional[dict] = None,
+        preserve_model: bool = False,
+    ) -> dict:
         """Build the effective model/runtime config for a single turn.
 
         Always uses the session's primary model/provider.  If `/fast` is
@@ -3896,7 +3904,25 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         mode, attach `request_overrides` so the API call is marked
         accordingly.
         """
+        from agent.model_router import resolve_model_route
+        from hermes_constants import parse_reasoning_effort
         from hermes_cli.models import resolve_fast_mode_overrides
+
+        if user_config is None:
+            try:
+                user_config = _load_gateway_config()
+            except Exception:
+                user_config = {}
+
+        decision = resolve_model_route(
+            user_message,
+            provider=runtime_kwargs.get("provider") or "",
+            current_model=model,
+            config=user_config,
+            preserve_model=preserve_model,
+            hermes_home=_hermes_home,
+        )
+        effective_model = decision.model
 
         runtime = {
             "api_key": runtime_kwargs.get("api_key"),
@@ -3909,15 +3935,21 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             "max_tokens": runtime_kwargs.get("max_tokens"),
         }
         route = {
-            "model": model,
+            "model": effective_model,
             "runtime": runtime,
             "signature": (
-                model,
+                effective_model,
                 runtime["provider"],
                 runtime["base_url"],
                 runtime["api_mode"],
                 runtime["command"],
                 tuple(runtime["args"]),
+            ),
+            "routing": decision,
+            "reasoning_config": (
+                parse_reasoning_effort(decision.reasoning_effort)
+                if decision.reasoning_effort
+                else None
             ),
         }
 
@@ -13314,7 +13346,19 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             reasoning_config = self._resolve_session_reasoning_config(source=source)
             self._reasoning_config = reasoning_config
             self._service_tier = self._load_service_tier()
-            turn_route = self._resolve_turn_agent_config(prompt, model, runtime_kwargs)
+            try:
+                turn_route = self._resolve_turn_agent_config(
+                    prompt,
+                    model,
+                    runtime_kwargs,
+                    user_config=user_config,
+                )
+            except TypeError as exc:
+                if "unexpected keyword argument 'user_config'" not in str(exc):
+                    raise
+                turn_route = self._resolve_turn_agent_config(prompt, model, runtime_kwargs)
+            if turn_route.get("reasoning_config") is not None:
+                reasoning_config = turn_route["reasoning_config"]
 
             # Enrich the prompt with image descriptions so the background
             # agent can see user-attached images (same as the main flow).
@@ -18079,7 +18123,27 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                     log_message="interim_assistant_callback scheduling error",
                 )
 
-            turn_route = self._resolve_turn_agent_config(message, model, runtime_kwargs)
+            _has_model_override = session_key in (
+                getattr(self, "_session_model_overrides", {}) or {}
+            )
+            try:
+                turn_route = self._resolve_turn_agent_config(
+                    message,
+                    model,
+                    runtime_kwargs,
+                    user_config=user_config,
+                    preserve_model=_has_model_override,
+                )
+            except TypeError as exc:
+                if "unexpected keyword argument" not in str(exc):
+                    raise
+                turn_route = self._resolve_turn_agent_config(message, model, runtime_kwargs)
+            _has_reasoning_override = session_key in (
+                getattr(self, "_session_reasoning_overrides", {}) or {}
+            )
+            if turn_route.get("reasoning_config") is not None and not _has_reasoning_override:
+                reasoning_config = turn_route["reasoning_config"]
+                self._reasoning_config = reasoning_config
 
             # Check agent cache — reuse the AIAgent from the previous message
             # in this session to preserve the frozen system prompt and tool

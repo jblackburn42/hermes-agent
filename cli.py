@@ -12111,6 +12111,7 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin):
             model_override=turn_route["model"],
             runtime_override=turn_route["runtime"],
             request_overrides=turn_route.get("request_overrides"),
+            reasoning_override=turn_route.get("reasoning_config"),
         ):
             return None
         

@@ -977,6 +977,22 @@ DEFAULT_CONFIG = {
     "model": "",
     "providers": {},
     "fallback_providers": [],
+    "smart_model_routing": {
+        "enabled": False,
+        "provider": "openai-codex",
+        "require_live_model": True,
+        "preserve_nondefault_model": True,
+        "models": {
+            "fast": "gpt-5.6-luna",
+            "balanced": "gpt-5.6-terra",
+            "frontier": "gpt-5.6-sol",
+        },
+        "reasoning": {
+            "fast": "low",
+            "balanced": "medium",
+            "frontier": "high",
+        },
+    },
     "credential_pool_strategies": {},
     "toolsets": ["hermes-cli"],
     # Global active chat session cap across CLI, TUI/dashboard, and messaging.

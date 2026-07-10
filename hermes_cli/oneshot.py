@@ -372,6 +372,23 @@ def _run_agent(
         explicit_base_url=explicit_base_url_from_alias,
     )
 
+    from agent.model_router import resolve_model_route
+    from hermes_constants import parse_reasoning_effort
+
+    route_decision = resolve_model_route(
+        prompt,
+        provider=runtime.get("provider") or "",
+        current_model=effective_model,
+        config=cfg,
+        preserve_model=bool((model or "").strip() or env_model),
+    )
+    effective_model = route_decision.model
+    routed_reasoning = (
+        parse_reasoning_effort(route_decision.reasoning_effort)
+        if route_decision.reasoning_effort
+        else None
+    )
+
     # Pull in explicit toolsets when provided; otherwise use whatever the user
     # has enabled for "cli". sorted() gives stable ordering for config-derived
     # sets; explicit values preserve user order.
@@ -396,6 +413,7 @@ def _run_agent(
         session_db=session_db,
         credential_pool=runtime.get("credential_pool"),
         fallback_model=_fb or None,
+        reasoning_config=routed_reasoning,
         # Interactive callbacks are intentionally NOT wired beyond this
         # one.  In oneshot mode there's no user sitting at a terminal:
         #   - clarify  → returns a synthetic "pick a default" instruction

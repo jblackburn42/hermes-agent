@@ -179,7 +179,17 @@ class CLIAgentSetupMixin:
         Processing / Anthropic fast mode, attach `request_overrides` so the
         API call is marked accordingly.
         """
+        from agent.model_router import resolve_model_route
+        from cli import CLI_CONFIG, _parse_reasoning_config
         from hermes_cli.models import resolve_fast_mode_overrides
+
+        decision = resolve_model_route(
+            user_message,
+            provider=self.provider or "",
+            current_model=self.model or "",
+            config=CLI_CONFIG,
+        )
+        effective_model = decision.model
 
         runtime = {
             "api_key": self.api_key,
@@ -191,15 +201,21 @@ class CLIAgentSetupMixin:
             "credential_pool": getattr(self, "_credential_pool", None),
         }
         route = {
-            "model": self.model,
+            "model": effective_model,
             "runtime": runtime,
             "signature": (
-                self.model,
+                effective_model,
                 runtime["provider"],
                 runtime["base_url"],
                 runtime["api_mode"],
                 runtime["command"],
                 tuple(runtime["args"]),
+            ),
+            "routing": decision,
+            "reasoning_config": (
+                _parse_reasoning_config(decision.reasoning_effort)
+                if decision.reasoning_effort
+                else None
             ),
         }
 
@@ -215,7 +231,14 @@ class CLIAgentSetupMixin:
         route["request_overrides"] = overrides
         return route
 
-    def _init_agent(self, *, model_override: str = None, runtime_override: dict = None, request_overrides: dict | None = None) -> bool:
+    def _init_agent(
+        self,
+        *,
+        model_override: str = None,
+        runtime_override: dict = None,
+        request_overrides: dict | None = None,
+        reasoning_override: dict | None = None,
+    ) -> bool:
         """
         Initialize the agent on first use.
         When resuming a session, restores conversation history from SQLite.
@@ -358,7 +381,11 @@ class CLIAgentSetupMixin:
                 tool_progress_mode=getattr(self, "tool_progress_mode", "all"),
                 ephemeral_system_prompt=self.system_prompt if self.system_prompt else None,
                 prefill_messages=self.prefill_messages or None,
-                reasoning_config=self.reasoning_config,
+                reasoning_config=(
+                    reasoning_override
+                    if reasoning_override is not None
+                    else self.reasoning_config
+                ),
                 service_tier=self.service_tier,
                 request_overrides=request_overrides,
                 providers_allowed=self._providers_only,
